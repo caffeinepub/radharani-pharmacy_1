@@ -1,33 +1,20 @@
 import { ArrowLeft, MessageSquare, Sparkles, Star, User } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
+import { seededReviews } from "../data/seededReviews";
+import { useActor } from "../hooks/useActor";
 
 interface Review {
-  id: number;
+  id: string;
   name: string;
   rating: number;
   comment: string;
   createdAt: number;
+  isVerified?: boolean;
 }
 
 interface ReviewsPageProps {
   onNavigate: (path: string) => void;
-}
-
-const STORAGE_KEY = "rp_reviews";
-
-function loadReviews(): Review[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as Review[];
-  } catch {
-    return [];
-  }
-}
-
-function saveReviews(reviews: Review[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(reviews));
 }
 
 function useCountUp(target: number, duration = 1200) {
@@ -178,7 +165,7 @@ function ReviewCard({ review, index }: { review: Review; index: number }) {
         type: "spring",
         stiffness: 80,
         damping: 18,
-        delay: index * 0.07,
+        delay: Math.min(index * 0.07, 0.5),
       }}
       className="group relative glass rounded-2xl p-5 border border-white/40 shadow-lg overflow-hidden cursor-default"
       whileHover={{ y: -4, boxShadow: "0 20px 40px rgba(16,185,129,0.12)" }}
@@ -209,10 +196,20 @@ function ReviewCard({ review, index }: { review: Review; index: number }) {
             >
               {review.name}
             </div>
-            <div className="text-xs text-slate-400">{date}</div>
+            <div className="flex items-center gap-1.5">
+              <div className="text-xs text-slate-400">{date}</div>
+              {review.isVerified && (
+                <span className="text-xs font-semibold text-emerald-600 flex items-center gap-0.5">
+                  <span>✓</span> Verified
+                </span>
+              )}
+            </div>
           </div>
         </div>
-        <AnimatedStars rating={review.rating} delay={index * 0.07} />
+        <AnimatedStars
+          rating={review.rating}
+          delay={Math.min(index * 0.07, 0.5)}
+        />
       </div>
       <p className="text-sm text-slate-600 leading-relaxed">{review.comment}</p>
     </motion.div>
@@ -282,8 +279,9 @@ function Particles() {
 }
 
 export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { actor, isFetching } = useActor();
+  const [backendReviews, setBackendReviews] = useState<Review[]>([]);
+  const [backendLoading, setBackendLoading] = useState(true);
   const [name, setName] = useState("");
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
@@ -294,13 +292,45 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
   const submitBtnRef = useRef<HTMLButtonElement>(null);
   const [btnTranslate, setBtnTranslate] = useState({ x: 0, y: 0 });
 
+  // Fetch backend reviews
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setReviews(loadReviews());
-      setLoading(false);
-    }, 900);
-    return () => clearTimeout(timer);
-  }, []);
+    if (!actor || isFetching) return;
+    setBackendLoading(true);
+    (actor as any)
+      .getReviews()
+      .then((raw) => {
+        const mapped: Review[] = raw.map((r) => ({
+          id: `backend-${r.id.toString()}`,
+          name: r.name,
+          rating: Number(r.rating),
+          comment: r.comment,
+          createdAt: Number(r.createdAt),
+          isVerified: true,
+        }));
+        setBackendReviews(mapped);
+      })
+      .catch(() => {
+        // Silently fail — seeded reviews will still show
+      })
+      .finally(() => setBackendLoading(false));
+  }, [actor, isFetching]);
+
+  // Combined + sorted
+  const allSeeded: Review[] = seededReviews.map((r) => ({
+    id: r.id,
+    name: r.name,
+    rating: r.rating,
+    comment: r.comment,
+    createdAt: r.createdAt,
+    isVerified: true,
+  }));
+
+  const allReviews: Review[] = [...backendReviews, ...allSeeded].sort(
+    (a, b) => b.createdAt - a.createdAt,
+  );
+
+  // Show shimmer only while backend loads (seeded show immediately)
+  const loading = backendLoading && !actor;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -318,18 +348,48 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
     if (!valid) return;
 
     setSubmitting(true);
-    await new Promise((res) => setTimeout(res, 800));
 
-    const newReview: Review = {
-      id: Date.now(),
-      name: name.trim(),
-      rating,
-      comment: comment.trim(),
-      createdAt: Date.now(),
-    };
-    const updated = [newReview, ...reviews];
-    saveReviews(updated);
-    setReviews(updated);
+    try {
+      if (actor) {
+        const newId = await (actor as any).addReview(
+          name.trim(),
+          BigInt(rating),
+          comment.trim(),
+        );
+        const newReview: Review = {
+          id: `backend-${newId.toString()}`,
+          name: name.trim(),
+          rating,
+          comment: comment.trim(),
+          createdAt: Date.now(),
+          isVerified: true,
+        };
+        setBackendReviews((prev) => [newReview, ...prev]);
+      } else {
+        // Fallback: show locally only if actor unavailable
+        const newReview: Review = {
+          id: `local-${Date.now()}`,
+          name: name.trim(),
+          rating,
+          comment: comment.trim(),
+          createdAt: Date.now(),
+          isVerified: false,
+        };
+        setBackendReviews((prev) => [newReview, ...prev]);
+      }
+    } catch {
+      // Submit error — still show locally
+      const newReview: Review = {
+        id: `local-${Date.now()}`,
+        name: name.trim(),
+        rating,
+        comment: comment.trim(),
+        createdAt: Date.now(),
+        isVerified: false,
+      };
+      setBackendReviews((prev) => [newReview, ...prev]);
+    }
+
     setName("");
     setRating(0);
     setComment("");
@@ -350,7 +410,8 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
   };
   const handleBtnMouseLeave = () => setBtnTranslate({ x: 0, y: 0 });
 
-  const sortedReviews = [...reviews].sort((a, b) => b.createdAt - a.createdAt);
+  // Only render a reasonable page of reviews (first 100 for performance)
+  const displayedReviews = allReviews.slice(0, 100);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-emerald-50/60 via-white to-slate-50 relative">
@@ -533,14 +594,16 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
 
         {/* Reviews List */}
         <div>
-          {reviews.length >= 3 && <SentimentBadge reviews={reviews} />}
+          {allReviews.length >= 3 && <SentimentBadge reviews={allReviews} />}
           <div className="flex items-center gap-2 mb-6">
             <h2
               className="text-xl font-bold text-slate-800"
               style={{ fontFamily: "Poppins,sans-serif" }}
             >
-              {reviews.length > 0
-                ? `${reviews.length} Review${reviews.length !== 1 ? "s" : ""}`
+              {allReviews.length > 0
+                ? `${allReviews.length.toLocaleString()} Review${
+                    allReviews.length !== 1 ? "s" : ""
+                  }`
                 : "Reviews"}
             </h2>
           </div>
@@ -551,7 +614,7 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
                 <ShimmerCard key={i} />
               ))}
             </div>
-          ) : sortedReviews.length === 0 ? (
+          ) : displayedReviews.length === 0 ? (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -581,7 +644,7 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
             </motion.div>
           ) : (
             <div className="columns-1 md:columns-2 gap-5">
-              {sortedReviews.map((review, index) => (
+              {displayedReviews.map((review, index) => (
                 <div key={review.id} className="break-inside-avoid mb-5">
                   <ReviewCard review={review} index={index} />
                 </div>
