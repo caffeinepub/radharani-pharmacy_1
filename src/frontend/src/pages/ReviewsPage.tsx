@@ -1,8 +1,9 @@
 import { ArrowLeft, MessageSquare, Sparkles, Star, User } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { seededReviews } from "../data/seededReviews";
-import { useActor } from "../hooks/useActor";
+
+const LOCAL_STORAGE_KEY = "radharani_user_reviews";
 
 interface Review {
   id: string;
@@ -32,9 +33,11 @@ function useCountUp(target: number, duration = 1200) {
   return value;
 }
 
-function SentimentBadge({ reviews }: { reviews: Review[] }) {
-  const positive = reviews.filter((r) => r.rating >= 4).length;
-  const percent = Math.round((positive / reviews.length) * 100);
+function SentimentBadge({
+  totalCount,
+  positiveCount,
+}: { totalCount: number; positiveCount: number }) {
+  const percent = Math.round((positiveCount / totalCount) * 100);
   const animated = useCountUp(percent);
   const color =
     percent >= 70
@@ -48,7 +51,6 @@ function SentimentBadge({ reviews }: { reviews: Review[] }) {
       : percent >= 40
         ? "Mixed Feedback"
         : "Needs Improvement";
-
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
@@ -74,8 +76,8 @@ function SentimentBadge({ reviews }: { reviews: Review[] }) {
             AI Insight
           </div>
           <div className="font-bold text-sm">
-            {animated}% positive · {reviews.length} review
-            {reviews.length !== 1 ? "s" : ""} · {label}
+            {animated}% positive · {totalCount.toLocaleString()} review
+            {totalCount !== 1 ? "s" : ""} · {label}
           </div>
         </div>
       </div>
@@ -118,33 +120,19 @@ function StarInput({
   );
 }
 
-function AnimatedStars({
-  rating,
-  delay = 0,
-}: { rating: number; delay?: number }) {
+function StaticStars({ rating }: { rating: number }) {
   return (
     <div className="flex gap-0.5">
-      {[1, 2, 3, 4, 5].map((star, i) => (
-        <motion.span
+      {[1, 2, 3, 4, 5].map((star) => (
+        <Star
           key={star}
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{
-            type: "spring",
-            stiffness: 300,
-            damping: 15,
-            delay: delay + i * 0.07,
-          }}
-        >
-          <Star
-            size={14}
-            className={
-              star <= rating
-                ? "fill-yellow-400 text-yellow-400"
-                : "text-slate-200"
-            }
-          />
-        </motion.span>
+          size={14}
+          className={
+            star <= rating
+              ? "fill-yellow-400 text-yellow-400"
+              : "text-slate-200"
+          }
+        />
       ))}
     </div>
   );
@@ -156,7 +144,6 @@ function ReviewCard({ review, index }: { review: Review; index: number }) {
     month: "short",
     year: "numeric",
   });
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 40 }}
@@ -165,25 +152,11 @@ function ReviewCard({ review, index }: { review: Review; index: number }) {
         type: "spring",
         stiffness: 80,
         damping: 18,
-        delay: Math.min(index * 0.07, 0.5),
+        delay: Math.min(index * 0.05, 0.4),
       }}
-      className="group relative glass rounded-2xl p-5 border border-white/40 shadow-lg overflow-hidden cursor-default"
+      className="group relative glass rounded-2xl p-5 border border-white/40 shadow-lg overflow-hidden cursor-default hover:bg-white/10 transition-colors duration-300"
       whileHover={{ y: -4, boxShadow: "0 20px 40px rgba(16,185,129,0.12)" }}
     >
-      <motion.div
-        className="absolute inset-0 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-500"
-        style={{
-          background:
-            "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.15) 50%, transparent 60%)",
-          backgroundSize: "200% 100%",
-        }}
-        animate={{ backgroundPosition: ["200% 0", "-200% 0"] }}
-        transition={{
-          duration: 1.5,
-          repeat: Number.POSITIVE_INFINITY,
-          ease: "linear",
-        }}
-      />
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
@@ -206,36 +179,10 @@ function ReviewCard({ review, index }: { review: Review; index: number }) {
             </div>
           </div>
         </div>
-        <AnimatedStars
-          rating={review.rating}
-          delay={Math.min(index * 0.07, 0.5)}
-        />
+        <StaticStars rating={review.rating} />
       </div>
       <p className="text-sm text-slate-600 leading-relaxed">{review.comment}</p>
     </motion.div>
-  );
-}
-
-function ShimmerCard() {
-  return (
-    <div className="glass rounded-2xl p-5 border border-white/40 shadow-lg animate-pulse">
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-9 h-9 rounded-xl bg-slate-200" />
-        <div className="flex-1">
-          <div className="h-3 bg-slate-200 rounded w-24 mb-1.5" />
-          <div className="h-2 bg-slate-100 rounded w-16" />
-        </div>
-        <div className="flex gap-0.5">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="w-3.5 h-3.5 bg-slate-200 rounded" />
-          ))}
-        </div>
-      </div>
-      <div className="space-y-1.5">
-        <div className="h-2.5 bg-slate-100 rounded w-full" />
-        <div className="h-2.5 bg-slate-100 rounded w-4/5" />
-      </div>
-    </div>
   );
 }
 
@@ -248,7 +195,6 @@ function Particles() {
     duration: 8 + (i % 5) * 2,
     opacity: 0.05 + (i % 4) * 0.03,
   }));
-
   return (
     <div className="fixed inset-0 pointer-events-none overflow-hidden">
       {particles.map((p) => (
@@ -278,10 +224,27 @@ function Particles() {
   );
 }
 
+function loadLocalReviews(): Review[] {
+  try {
+    const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalReviews(reviews: Review[]) {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(reviews));
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
-  const { actor, isFetching } = useActor();
-  const [backendReviews, setBackendReviews] = useState<Review[]>([]);
-  const [backendLoading, setBackendLoading] = useState(true);
+  const [localReviews, setLocalReviews] = useState<Review[]>(() =>
+    loadLocalReviews(),
+  );
   const [name, setName] = useState("");
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
@@ -292,45 +255,34 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
   const submitBtnRef = useRef<HTMLButtonElement>(null);
   const [btnTranslate, setBtnTranslate] = useState({ x: 0, y: 0 });
 
-  // Fetch backend reviews
-  useEffect(() => {
-    if (!actor || isFetching) return;
-    setBackendLoading(true);
-    (actor as any)
-      .getReviews()
-      .then((raw) => {
-        const mapped: Review[] = raw.map((r) => ({
-          id: `backend-${r.id.toString()}`,
-          name: r.name,
-          rating: Number(r.rating),
-          comment: r.comment,
-          createdAt: Number(r.createdAt),
-          isVerified: true,
-        }));
-        setBackendReviews(mapped);
-      })
-      .catch(() => {
-        // Silently fail — seeded reviews will still show
-      })
-      .finally(() => setBackendLoading(false));
-  }, [actor, isFetching]);
+  // Display first 100 original + all 200 Jan 2026 reviews (sorted newest first for Jan batch)
+  // Total seededReviews = 700 (500 original + 200 Jan 2026)
+  const displayedSeeded = useMemo(() => {
+    // Jan 2026 reviews are at index 500-699, show them first (most recent)
+    const jan2026 = seededReviews.slice(500, 700);
+    const original = seededReviews.slice(0, 100);
+    return [...jan2026, ...original].map((r) => ({
+      id: r.id,
+      name: r.name,
+      rating: r.rating,
+      comment: r.comment,
+      createdAt: r.createdAt,
+      isVerified: true as const,
+    }));
+  }, []);
 
-  // Combined + sorted
-  const allSeeded: Review[] = seededReviews.map((r) => ({
-    id: r.id,
-    name: r.name,
-    rating: r.rating,
-    comment: r.comment,
-    createdAt: r.createdAt,
-    isVerified: true,
-  }));
+  const displayedReviews: Review[] = [
+    ...localReviews.slice().reverse(),
+    ...displayedSeeded,
+  ];
 
-  const allReviews: Review[] = [...backendReviews, ...allSeeded].sort(
-    (a, b) => b.createdAt - a.createdAt,
+  const totalCount = seededReviews.length + localReviews.length;
+  const seededPositiveCount = useMemo(
+    () => seededReviews.filter((r) => r.rating >= 4).length,
+    [],
   );
-
-  // Show shimmer only while backend loads (seeded show immediately)
-  const loading = backendLoading && !actor;
+  const localPositiveCount = localReviews.filter((r) => r.rating >= 4).length;
+  const totalPositiveCount = seededPositiveCount + localPositiveCount;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -346,50 +298,18 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
       valid = false;
     }
     if (!valid) return;
-
     setSubmitting(true);
-
-    try {
-      if (actor) {
-        const newId = await (actor as any).addReview(
-          name.trim(),
-          BigInt(rating),
-          comment.trim(),
-        );
-        const newReview: Review = {
-          id: `backend-${newId.toString()}`,
-          name: name.trim(),
-          rating,
-          comment: comment.trim(),
-          createdAt: Date.now(),
-          isVerified: true,
-        };
-        setBackendReviews((prev) => [newReview, ...prev]);
-      } else {
-        // Fallback: show locally only if actor unavailable
-        const newReview: Review = {
-          id: `local-${Date.now()}`,
-          name: name.trim(),
-          rating,
-          comment: comment.trim(),
-          createdAt: Date.now(),
-          isVerified: false,
-        };
-        setBackendReviews((prev) => [newReview, ...prev]);
-      }
-    } catch {
-      // Submit error — still show locally
-      const newReview: Review = {
-        id: `local-${Date.now()}`,
-        name: name.trim(),
-        rating,
-        comment: comment.trim(),
-        createdAt: Date.now(),
-        isVerified: false,
-      };
-      setBackendReviews((prev) => [newReview, ...prev]);
-    }
-
+    const newReview: Review = {
+      id: `local-${Date.now()}`,
+      name: name.trim(),
+      rating,
+      comment: comment.trim(),
+      createdAt: Date.now(),
+      isVerified: true,
+    };
+    const updated = [...localReviews, newReview];
+    setLocalReviews(updated);
+    saveLocalReviews(updated);
     setName("");
     setRating(0);
     setComment("");
@@ -402,21 +322,21 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
     const btn = submitBtnRef.current;
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const dx = Math.min(Math.max(e.clientX - cx, -50), 50);
-    const dy = Math.min(Math.max(e.clientY - cy, -20), 20);
+    const dx = Math.min(
+      Math.max(e.clientX - (rect.left + rect.width / 2), -50),
+      50,
+    );
+    const dy = Math.min(
+      Math.max(e.clientY - (rect.top + rect.height / 2), -20),
+      20,
+    );
     setBtnTranslate({ x: dx * 0.16, y: dy * 0.16 });
   };
   const handleBtnMouseLeave = () => setBtnTranslate({ x: 0, y: 0 });
 
-  // Only render a reasonable page of reviews (first 100 for performance)
-  const displayedReviews = allReviews.slice(0, 100);
-
   return (
     <div className="min-h-screen bg-gradient-to-b from-emerald-50/60 via-white to-slate-50 relative">
       <Particles />
-
       <div className="relative z-10 pt-24 pb-2 px-4 max-w-4xl mx-auto">
         <button
           type="button"
@@ -454,7 +374,6 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
           </p>
         </motion.div>
 
-        {/* Review Form */}
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
@@ -470,10 +389,9 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
             className="text-lg font-bold text-slate-800 mb-5 flex items-center gap-2"
             style={{ fontFamily: "Poppins,sans-serif" }}
           >
-            <MessageSquare size={18} className="text-emerald-600" />
-            Write a Review
+            <MessageSquare size={18} className="text-emerald-600" /> Write a
+            Review
           </h2>
-
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label
@@ -508,7 +426,6 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
                 </motion.p>
               )}
             </div>
-
             <div>
               <p className="text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">
                 Rating <span className="text-rose-500">*</span>
@@ -525,7 +442,6 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
                 </motion.p>
               )}
             </div>
-
             <div>
               <label
                 htmlFor="review-comment"
@@ -543,7 +459,6 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
                 className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-white/60 text-slate-800 text-sm placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition-all resize-none"
               />
             </div>
-
             <div className="flex items-center gap-4">
               <motion.button
                 ref={submitBtnRef}
@@ -574,7 +489,6 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
                   "Post Review"
                 )}
               </motion.button>
-
               <AnimatePresence>
                 {submitted && (
                   <motion.div
@@ -584,7 +498,7 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
                     data-ocid="reviews.success_state"
                     className="flex items-center gap-1.5 text-emerald-600 text-sm font-semibold"
                   >
-                    <span className="text-lg">✓</span> Review posted!
+                    <span className="text-lg">✓</span> Review saved!
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -592,29 +506,24 @@ export default function ReviewsPage({ onNavigate }: ReviewsPageProps) {
           </form>
         </motion.div>
 
-        {/* Reviews List */}
         <div>
-          {allReviews.length >= 3 && <SentimentBadge reviews={allReviews} />}
+          {totalCount >= 3 && (
+            <SentimentBadge
+              totalCount={totalCount}
+              positiveCount={totalPositiveCount}
+            />
+          )}
           <div className="flex items-center gap-2 mb-6">
             <h2
               className="text-xl font-bold text-slate-800"
               style={{ fontFamily: "Poppins,sans-serif" }}
             >
-              {allReviews.length > 0
-                ? `${allReviews.length.toLocaleString()} Review${
-                    allReviews.length !== 1 ? "s" : ""
-                  }`
+              {totalCount > 0
+                ? `${totalCount.toLocaleString()} Review${totalCount !== 1 ? "s" : ""}`
                 : "Reviews"}
             </h2>
           </div>
-
-          {loading ? (
-            <div className="columns-1 md:columns-2 gap-4 space-y-4">
-              {[1, 2, 3, 4].map((i) => (
-                <ShimmerCard key={i} />
-              ))}
-            </div>
-          ) : displayedReviews.length === 0 ? (
+          {displayedReviews.length === 0 ? (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
